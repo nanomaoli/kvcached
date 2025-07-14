@@ -10,7 +10,7 @@ MODEL=meta-llama/Llama-3.1-8B
 VLLM_PORT=12346
 SGL_PORT=30000
 
-NUM_PROMPTS=1000
+NUM_PROMPTS=20
 REQUEST_RATE=10
 
 op=$1
@@ -26,16 +26,18 @@ check_and_download_sharegpt() {
 
 if [ "$op" == "vllm" ]; then
     check_and_download_sharegpt
-    source "$ENGINE_DIR/vllm-v0.8.4/.venv/bin/activate"
+    source "$ENGINE_DIR/vllm-v0.9.2/.venv/bin/activate"
     uv pip install pandas datasets
-    pushd $ENGINE_DIR/vllm-v0.8.4/benchmarks
+    pushd $ENGINE_DIR/vllm-v0.9.2/benchmarks
     python benchmark_serving.py --backend=vllm \
       --model $MODEL \
       --dataset-name sharegpt \
       --dataset-path $SCRIPT_DIR/ShareGPT_V3_unfiltered_cleaned_split.json \
       --request-rate $REQUEST_RATE \
       --num-prompts $NUM_PROMPTS \
-      --port $VLLM_PORT
+      --port $VLLM_PORT \
+      --save-result \
+      --save-detailed
     deactivate
     popd
 elif [ "$op" == "sgl" -o "$op" == "sglang" ]; then

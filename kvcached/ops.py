@@ -4,7 +4,8 @@ from typing import List, Tuple
 import torch
 
 from kvcached.slab_allocator import PAGE_SIZE
-from kvcached.tp_ipc_util import start_worker_listerner_thread
+# from kvcached.tp_ipc_util import start_worker_listerner_thread
+from kvcached.tp_ipc_util import start_worker_subscriber
 from kvcached.vmm_ops import create_kv_tensors
 from kvcached.vmm_ops import init_kvcached as _init_kvcached_impl
 from kvcached.vmm_ops import shutdown_kvcached as _shutdown_kvcached_impl
@@ -15,7 +16,8 @@ def init_kvcached(tp_size: int = None) -> None:
     _init_kvcached_impl(device)
     if tp_size is not None and tp_size > 1:
         # start the listener thread for tensor parallel kv cache management
-        start_worker_listerner_thread(torch.cuda.current_device())
+        # start_worker_listerner_thread(torch.cuda.current_device())
+        start_worker_subscriber()
 
 
 def shutdown_kvcached() -> None:

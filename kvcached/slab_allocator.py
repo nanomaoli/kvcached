@@ -4,11 +4,11 @@ from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from typing import Dict, List, Optional
 
-import psutil
 import torch
 
-from kvcached.tp_ipc_util import (broadcast_map_to_kv_tensors_to_workers,
-                                  broadcast_unmap_from_kv_tensors_to_workers)
+# from kvcached.tp_ipc_util import (broadcast_map_to_kv_tensors_to_workers,
+#                                   broadcast_unmap_from_kv_tensors_to_workers)
+from kvcached.tp_ipc_util import init_publisher, send_pub_message
 from kvcached.vmm_ops import map_to_kv_tensors, unmap_from_kv_tensors
 
 SANITY_CHECK = False
@@ -163,7 +163,8 @@ class PageAllocator(PageAllocatorBase):
         """Call the mapping function to map pages to physical memory, considering tensor parallelism."""
         if self.tp_size is not None and self.tp_size > 1:
             # map the pages across all tensor parallel workers.
-            broadcast_map_to_kv_tensors_to_workers(self.tp_size, offsets)
+            # broadcast_map_to_kv_tensors_to_workers(self.tp_size, offsets)
+            send_pub_message("map_to_kv_tensors", offsets)
         else:
             map_to_kv_tensors(offsets)
 
@@ -171,7 +172,8 @@ class PageAllocator(PageAllocatorBase):
         """Call the unmapping function to unmap pages from physical memory, considering tensor parallelism."""
         if self.tp_size is not None and self.tp_size > 1:
             # unmap the pages across all tensor parallel workers.
-            broadcast_unmap_from_kv_tensors_to_workers(self.tp_size, offsets)
+            # broadcast_unmap_from_kv_tensors_to_workers(self.tp_size, offsets)
+            send_pub_message("unmap_from_kv_tensors", offsets)
         else:
             unmap_from_kv_tensors(offsets)
 
@@ -409,6 +411,7 @@ class KVCacheManager:
         block_size: int,
         cell_size: int,
         num_layers: int,
+        tp_size: int,
     ):
         self.num_blocks = num_blocks
         self.block_mem_size = block_size * cell_size
@@ -416,12 +419,8 @@ class KVCacheManager:
 
         mem_size = self.num_blocks * self.block_mem_size
 
-        num_children_processes = len(
-            psutil.Process().children(recursive=False))
-        self.tp_size = max(num_children_processes,
-                           1)  # fall back to 1 if no children processes
-        tp_size = self.tp_size
         if tp_size > 1:
+            init_publisher()
             self.page_allocator = PageAllocator(mem_size, PAGE_SIZE, tp_size)
         else:
             self.page_allocator = PageAllocator(mem_size, PAGE_SIZE)
