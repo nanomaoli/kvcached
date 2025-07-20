@@ -10,7 +10,7 @@ MODEL=meta-llama/Llama-3.1-8B
 VLLM_PORT=12346
 SGL_PORT=30000
 
-NUM_PROMPTS=1000
+NUM_PROMPTS=10
 REQUEST_RATE=10
 
 op=$1
@@ -35,6 +35,9 @@ if [ "$op" == "vllm" ]; then
       --dataset-path $SCRIPT_DIR/ShareGPT_V3_unfiltered_cleaned_split.json \
       --request-rate $REQUEST_RATE \
       --num-prompts $NUM_PROMPTS \
+      --sharegpt-output-len 128 \
+      --save-result \
+      --save-detail \
       --port $VLLM_PORT
     deactivate
     popd

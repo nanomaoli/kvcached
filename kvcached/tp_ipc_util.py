@@ -2,6 +2,8 @@ import os
 import pickle
 import socket
 import threading
+import time
+import numpy as np
 
 from kvcached.vmm_ops import (kv_tensors_created, map_to_kv_tensors,
                               unmap_from_kv_tensors)
@@ -77,10 +79,16 @@ def start_worker_listerner_thread(rank: int):
                 msg = recv_msg(conn)
                 # print(f"Worker {rank} received message: {msg}")
                 if msg["cmd"] == "map_to_kv_tensors":
+                    start = time.time()
                     map_to_kv_tensors(msg["offsets"])
+                    end = time.time()
+                    print(f"[kvcached worker {rank}] map_to_kv_tensors: gpu op took {end - start:.6f}s", flush=True)
                     send_msg(conn, {"status": "success"})
                 elif msg["cmd"] == "unmap_from_kv_tensors":
+                    start = time.time()
                     unmap_from_kv_tensors(msg["offsets"])
+                    end = time.time()
+                    print(f"[kvcached worker {rank}] unmap_from_kv_tensors: gpu op took {end - start:.6f}s", flush=True)
                     send_msg(conn, {"status": "success"})
                 elif msg["cmd"] == "kv_tensors_created":
                     created: bool = kv_tensors_created()
@@ -102,7 +110,10 @@ def start_worker_listerner_thread(rank: int):
 
 def broadcast_map_to_kv_tensors_to_workers(tp_size: int,
                                            offsets: list[int]) -> None:
+    start_time = time.time()
+    per_rank_times = []
     for rank in range(tp_size):
+        t0 = time.time()
         socket_path = get_worker_socket_path(rank)
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.connect(socket_path)
@@ -113,11 +124,21 @@ def broadcast_map_to_kv_tensors_to_workers(tp_size: int,
                 raise RuntimeError(f"Worker {rank} failed to map: {response}")
         finally:
             sock.close()
+        t1 = time.time()
+        per_rank_times.append(t1-t0)
+    
+    end_time = time.time()
+    total_time = end_time - start_time
+    mean_time = np.mean(per_rank_times)
+    print(f"[kvcached benchmark] map_to_kv_tensors: total={total_time:.6f}s, mean_per_rank={mean_time:.6f}s, max={max(per_rank_times):.6f}s, per_rank_time: {per_rank_times}s. offsets: {offsets}", flush=True)
 
 
 def broadcast_unmap_from_kv_tensors_to_workers(tp_size: int,
                                                offsets: list[int]) -> None:
+    start_time = time.time()
+    per_rank_times = []
     for rank in range(tp_size):
+        t0 = time.time()
         socket_path = get_worker_socket_path(rank)
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.connect(socket_path)
@@ -131,6 +152,13 @@ def broadcast_unmap_from_kv_tensors_to_workers(tp_size: int,
                 raise RuntimeError(f"Worker {rank} failed to unmap {response}")
         finally:
             sock.close()
+        t1 = time.time()
+        per_rank_times.append(t1-t0)
+    
+    end_time = time.time()
+    total_time = end_time - start_time
+    mean_time = np.mean(per_rank_times)
+    print(f"[kvcached benchmark] unmap_from_kv_tensors: total={total_time:.6f}s, mean_per_rank={mean_time:.6f}s, max={max(per_rank_times):.6f}s, per_rank_time: {per_rank_times}s. offsets: {offsets}", flush=True)
 
 
 def broadcast_kv_tensors_created_to_workers(tp_size: int) -> bool:
