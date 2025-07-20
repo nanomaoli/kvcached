@@ -4,6 +4,7 @@ import socket
 import threading
 import time
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from kvcached.vmm_ops import (kv_tensors_created, map_to_kv_tensors,
                               unmap_from_kv_tensors)
@@ -107,30 +108,63 @@ def start_worker_listerner_thread(rank: int):
     t = threading.Thread(target=listen_loop, daemon=True)
     t.start()
 
+def send_map_cmd_to_worker(rank, offsets):
+    socket_path = get_worker_socket_path(rank)
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.connect(socket_path)
+        send_msg(sock, {"cmd": "map_to_kv_tensors", "offsets": offsets})
+        response = recv_msg(sock)
+        if response.get("status") != "success":
+            raise RuntimeError(f"Worker {rank} failed to map: {response}")
+    finally:
+        sock.close()
 
 def broadcast_map_to_kv_tensors_to_workers(tp_size: int,
                                            offsets: list[int]) -> None:
     start_time = time.time()
     per_rank_times = []
-    for rank in range(tp_size):
+    
+    def timed_send(rank):
         t0 = time.time()
-        socket_path = get_worker_socket_path(rank)
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.connect(socket_path)
-        try:
-            send_msg(sock, {"cmd": "map_to_kv_tensors", "offsets": offsets})
-            response = recv_msg(sock)
-            if response.get("status") != "success":
-                raise RuntimeError(f"Worker {rank} failed to map: {response}")
-        finally:
-            sock.close()
+        send_map_cmd_to_worker(rank, offsets)
         t1 = time.time()
-        per_rank_times.append(t1-t0)
+        return rank, t1 - t0
+    
+    with ThreadPoolExecutor(max_workers=tp_size) as executor:
+        futures = [executor.submit(timed_send, rank) for rank in range(tp_size)]
+        for future in as_completed(futures):
+            rank, elapsed = future.result()
+            per_rank_times.append((rank, elapsed))
     
     end_time = time.time()
-    total_time = end_time - start_time
-    mean_time = np.mean(per_rank_times)
-    print(f"[kvcached benchmark] map_to_kv_tensors: total={total_time:.6f}s, mean_per_rank={mean_time:.6f}s, max={max(per_rank_times):.6f}s, per_rank_time: {per_rank_times}s. offsets: {offsets}", flush=True)
+    per_rank_times.sort()
+    rank_times = [t for _, t in per_rank_times]
+    print(f"[kvcached benchmark] map_to_kv_tensors: total={end_time - start_time:.6f}s, mean_per_rank={sum(rank_times)/tp_size:.6f}s, max={max(rank_times):.6f}s, per_rank_time: {rank_times}s. offsets: {offsets}", flush=True)
+
+# def broadcast_map_to_kv_tensors_to_workers(tp_size: int,
+#                                            offsets: list[int]) -> None:
+#     start_time = time.time()
+#     per_rank_times = []
+#     for rank in range(tp_size):
+#         t0 = time.time()
+#         socket_path = get_worker_socket_path(rank)
+#         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+#         sock.connect(socket_path)
+#         try:
+#             send_msg(sock, {"cmd": "map_to_kv_tensors", "offsets": offsets})
+#             response = recv_msg(sock)
+#             if response.get("status") != "success":
+#                 raise RuntimeError(f"Worker {rank} failed to map: {response}")
+#         finally:
+#             sock.close()
+#         t1 = time.time()
+#         per_rank_times.append(t1-t0)
+    
+#     end_time = time.time()
+#     total_time = end_time - start_time
+#     mean_time = np.mean(per_rank_times)
+#     print(f"[kvcached benchmark] map_to_kv_tensors: total={total_time:.6f}s, mean_per_rank={mean_time:.6f}s, max={max(per_rank_times):.6f}s, per_rank_time: {per_rank_times}s. offsets: {offsets}", flush=True)
 
 
 def broadcast_unmap_from_kv_tensors_to_workers(tp_size: int,
